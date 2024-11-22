@@ -7,8 +7,9 @@
 # 1/22/24 - Calling S.U.P.E.R.M.A.N by full file location as opposed to 'symlink' due to possible issues and authentication?!
 # 11/20/24 - optimizations to the script
 # 11/21/24 - added macOS (15) Sequioa compatibility and SUPERMAN 5 support (with SUPERMAN 4 still in environment)
-version="2.6"
-date=11/21/24
+# 11/22/24 - added an additional measurement to determine if the user has an available 'soft count deferral' and writing a value to allow (to allow the Defer prompt to appear instead of right to install)
+version="2.7"
+date=11/22/24
 
 ############################## Assets Required ############################
 # Jamf Pro 10.x
@@ -29,7 +30,7 @@ swiftPolicy=""
 swiftIcon=""
 # Swift Dialog icon Jamf Pro Policy, to install if icon is missing [not required!]
 iconPolicy=""
-# S.U.P.E.R.M.A.N 4 Jamf Pro Policy, installs SUPER if it does not exist locally on the machine already
+# S.U.P.E.R.M.A.N 4 Jamf Pro Policy
 superPolicy="super"
 # IBM Notifier Jamf Pro Policy [DEPRECATED]
 #ibmNotifierPolicy="super_ibm_notifier"
@@ -229,6 +230,7 @@ ssWindow() {
         # esac
 }
 
+# generates the Swift Dialog prompt for the update list array
 updatesAvailable_Win() {
     "$swiftDialogBin" -o -p --progress --hideicon --button1text none \
     --title "Available Updates:" --titlefont size="18" \
@@ -387,9 +389,44 @@ sysPreferences(){
             echo "quit:" >> ${commandFile}
 }
 
+# 11/22/24 addition
+# this checks for the number of 'deferrals' available to the user and writes a new value if the user has no 'deferrals' available (to show the SUPERMAN defer prompt)
+# this was created to stop users from going right-to-install when they have no more 'Soft Count deferrals' available
+superCounter(){
+    echo "Checking S.U.P.E.R.M.A.N 'Deferral counts'..."
+    superlocalPlist=/Library/Management/super/com.macjutsu.super.plist
+
+    # check to make sure the local SUPER plist exists, no need to write any values if it does not
+    if [[ -e "$superlocalPlist" ]]; then
+        echo "FOUND S.U.P.E.R.M.A.N plist! Able to proceeed..."
+    else
+        return
+    fi
+
+    # this is the max number of 'deferrals' [count]
+    deadlineCount=$(defaults read $superlocalPlist DeadlineCountSoft)
+        #echo "Deadline Count: $deadlineCount"
+
+    # this is the current number of 'deferrals' [counter]
+    deadlineCounter=$(defaults read $superlocalPlist DeadlineCounterSoft)
+        echo "Deadline Counter Soft: $deadlineCounter"
+
+        # check to make sure the user has a 'deferral' available (1) to allow the SUPER screen to show up without going straight to install
+        if [[ "$deadlineCounter" -ge 4 ]]; then
+            echo "** CAUTION: USER has NO (0) deferrals left! **"
+            echo "Setting 'DeadlineCounterSoft' (in /Library/Management/super/com.macjutsu.super.plist) to '3' to allow for SUPER deferral window for 1 time..."
+                set -x 
+            defaults write $superlocalPlist DeadlineCounterSoft 3
+                set +x
+        else
+            echo "CHECK COMPLETE: Deferral count will not impede the 'workflow'."
+        fi
+    }
+
 # checks for local install of SUPERMAN and installs the latest version via the 'superPolicy' IF not installed
 superCheck() {
     echo "* INITIAL CHECK: S.U.P.E.R.M.A.N *"
+
         # checks for versioning of SUPER[MAN] between the script version and Configuration Profile version
         # a bit extra but with multiple versions of SUPER in the environment, this is a good 'failsafe' to have (in my non-expert opinion)
         # SUPER found and Configuration File version matches the version found in Profiles
@@ -462,6 +499,7 @@ superTail() {
             # SUPER is about to prompt the user
             if [[ $line == *"IBM Notifier: Restart or defer dialog with no timeout"* ]] || [[ $line == *"IBM Notifier: User authentication deadline count dialog"* ]] || [[ $line == *"User choice dialog with no timeout."* ]]; then
                 echo "title: Updates Ready To Install" >> ${commandFile}
+                    # set the icon for each update item in the array item to a checkmark (success)
                     if [[ "$totalUpdates" -eq 1 ]]; then
                         echo "listitem: ${availableUpdates[0]}: success" >> ${commandFile}
                     elif [[ "$totalUpdates" -eq 2 ]]; then
@@ -521,6 +559,7 @@ iconCheck
 ssWindow
     checkSuperPlist
 checkUpdates
-    superCheck
+    superCounter
+superCheck
 # End Body
 #exit 0
